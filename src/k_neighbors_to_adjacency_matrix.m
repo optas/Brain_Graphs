@@ -1,4 +1,5 @@
-function [A] = k_neighbors_to_adjacency_matrix(kNeighbors)
+function [A] = k_neighbors_to_adjacency_matrix(kNeighbors, weight_type)
+% TODO: Add explanation of weight_type
 % Converts the k-nearest neighbors data into a corresponding (weighted)
 % graph described by its adjacency matrix.
 % 
@@ -15,15 +16,14 @@ function [A] = k_neighbors_to_adjacency_matrix(kNeighbors)
 %                            connected with their k-nn with edge weights
 %                            being their corresponding distances.
 
-[n, k]     = size(kNeighbors.IDs);
-totalEdges = numel(kNeighbors.Dist);
 
+[n, k]     = size(kNeighbors.IDs);
+totalEdges = numel(kNeighbors.(weight_type));
 temp       = repmat(1:n, k, 1); 
 
-i = reshape(temp, 1, totalEdges);             %1,...,1,2,..,2,...,n,...,n (each block has k elements)
-j = reshape(kNeighbors.IDs', 1, totalEdges);  %j(m)  =  kNeighbors.IDs(ceil(m/k), mod(m,k))
+i = reshape(temp, 1, totalEdges);             % 1,...,1,2,..,2,...,n,...,n (each block has k elements)
+j = reshape(kNeighbors.IDs', 1, totalEdges);  % j(m)  =  kNeighbors.IDs(ceil(m/k), mod(m,k))
 v = reshape(kNeighbors.Dist', 1, totalEdges);
-
 
 A = sparse(i, j, v, n, n);
    

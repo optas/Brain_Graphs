@@ -1,31 +1,90 @@
 clear; clc;
 
-%% Load bvecs-bvals
-bvecs = dlmread('Data/run01_aligned_trilin.bvecs')';
-bvals = dlmread('Data/run01_aligned_trilin.bvals');
+%% Load bvecs-bvals.
+bvecs = dlmread('Brain_Graphs/Data/run01_aligned_trilin.bvecs')';
+bvals = dlmread('Brain_Graphs/Data/run01_aligned_trilin.bvals');
 bvals = (bvals/1000)';
-bvecs = bvecs(11:end, :); % first 10 are zero
-bvals = bvals(11:end, :);
+bvecs = bvecs(11:end, :);  % First 10 are zero.
+bvals = bvals(11:end);
 
-%% Load and preprocess fiber points and their flows 
-flows        = load('Data/signal.mat');
-flows        = cellfun(@(x) x(11:end,:)', flows.S, 'UniformOutput', false)';% First 10 values are garbage
+%% Load and preprocess fiber points and their flows.
+flows       = load('Brain_Graphs/Data/signal.mat');
+flows       = cellfun(@(x) x(11:end,:)', flows.S, 'UniformOutput', false)'; % First 10 values are garbage.
+flowsM      = cell2mat(flows);
 
-fibers       = load('Data/fibers.mat');
-fibers       = fibers.fibers;
-fibers       = cellfun(@transpose, fibers, 'UniformOutput', false);        % rows = Fibers, columns = x,y,z coordinates
+fibers      = load('Brain_Graphs/Data/fibers.mat');
+fibers      = fibers.fibers;
+fibers      = cellfun(@transpose, fibers, 'UniformOutput', false);          % Rows = fibers, columns = x,y,z coordinates.
+fibersM     = cell2mat(fibers);
+fiberLabels = cell_as_matrix_labels(fibers);
 
-flowsM       = cell2mat(flows);
-fibersM      = cell2mat(fibers);
-
-fiberLabels  = cell_as_matrix_labels(fibers);
-
-%% Basic Parameters
+%% Basic Parameters.
 allFibers = size(fibers, 1);
 allPoints = size(fibersM, 1);
-min_angle = 45;
-power_law = 2;
-topK      = 100;
+minAngle  = 30;                 % Angle of cone.
+powerLaw  = 4;                  % Power of formula of flow distance (bigger => more emphasis on the flows).
+topK      = 10;                 % Closest neighbors of each point that we keep.
+
+%% Top k-Euclidean neighbors.
+[ids, dist]     = knnsearch(fibersM, fibersM, 'K', topK+1);
+kNeighbors.ids  = ids(:, 2:end);    % Closest neighbor is the point itself.
+kNeighbors.dist = dist(:, 2:end);
+
+
+%% What percent of the top k-neighbords live on the same fiber.
+res = BG.neighbors_on_same_fiber(kNeighbors.ids, fiberLabels)
+
+%% Calibrate Euclidean distances of knn by flow-distance.
+flows_calibrated = exp(1).^-flowsM;    % Accounting that a flow being small semantically 'means' is bigger.
+tic
+kNeighbors.flowDist = zeros(size(kNeighbors.dist));
+for i=1:allPoints;
+    x = fibersM(i,:);
+    j = 1;
+    for nID = kNeighbors.ids(i,:) % Traverse all knn of x.
+        kNeighbors.flowDist(i, j) = embedded_flow_distance(x, fibersM(nID, :), flows_calibrated(i, :), bvecs, minAngle, powerLaw);
+        j = j + 1; 
+    end
+end
+toc
+
+%% Re-sort knn according to new distances
+[sortedDists, sortedIndex] = sort(kNeighbors.flowDist, 2);
+kNeighbors.flowIDs = zeros(size(kNeighbors.flowDist));
+
+for i=1:allPoints
+    kNeighbors.flowIDs(i, :)     = kNeighbors.ids(i, sortedIndex(i,:));
+    assert(all(sortedDists(i,:) == kNeighbors.flowDist(i, sortedIndex(i, :))));
+end
+
+kNeighbors.flowDist = sortedDists;
+
+res = BG.neighbors_on_same_fiber(kNeighbors.flowIDs, fiberLabels)
+
+%%
+fiber = 10;
+pointsOnFiber = size(fibers{fiber}, 1);
+figure; hold on;
+for point = 1:pointsOnFiber-1    
+    scatter3(fibers{fiber}(point, 1), fibers{fiber}(point, 2), fibers{fiber}(point, 3))
+    input('')
+end
+
+%% Find how much flow goes between succecive points of a fiber.
+fiber = 10;
+pointsOnFiber = size(fibers{fiber}, 1);
+for point = 1:pointsOnFiber-1
+    x = fibers{fiber}(point, :);
+    y = fibers{fiber}(point+1, :);
+    [val, index] = min(angles(y-x, bvecs));
+    xFlows = flows{fiber}(point,:);
+    sum(xFlows(index) >= xFlows) 
+    sum(xFlows(index) >= xFlows) / length(xFlows)   
+%     flow_fraction(x, y, flows{fiber}(point,:), bvecs, 10)
+    input('')
+end
+
+
 
 %% BF (Testing)
 % points = fibersM(1:100,:);
@@ -33,12 +92,11 @@ topK      = 100;
 % [kNeighbors.Dist, kNeighbors.IDs] = top_k_neighbors_from_dist_parfor(distSmalls, 10);
 
 %% 
-% load 'Data/allDists_powerlaw_1';
-% load 'Data/allDists_powerlaw_2';
-load 'Data/tok_100_Neighbors_powerlaw_2';
-% save ('Data/tok_100_Neighbors_powerlaw_2.mat', kNeighbors);
+% load 'Brain_Graphs/Data/allDists_powerlaw_1';
+% load 'Brain_Graphs/Data/allDists_powerlaw_2';
+load 'Brain_Graphs/Data/tok_100_Neighbors_powerlaw_2';
+% save ('Brain_Graphs/Data/tok_100_Neighbors_powerlaw_2.mat', kNeighbors);
 % clear 'allDists'
-
 
 
 %% Measure deviation from symmetry according to single closest neighbor
@@ -104,89 +162,3 @@ plot(different_ks, infArr)
 title('Deviation from being a symmetric distance')
 xlabel('Values of k, for knn')
 ylabel('Fraction of Completely missed')
-
-
-%% Top k-Euclidean neighbors
-[ids, dist]     = knnsearch(fibersM, fibersM, 'K', topK+1);
-l2_kNeighbors.IDs  = ids(:, 2:end);
-l2_kNeighbors.Dist = dist(:, 2:end);
-
-
-%% Check percentages of flow-knn on same fiber
-labelOfNeighbors = fiberLabels(kNeighbors.IDs);
-res = zeros(100, 1);
-i = 1;
-for m =1:100
-    sameLabel = sum(sum(labelOfNeighbors(:,1:m) - repmat(fiberLabels, 1, m) == 0));
-    diffLabel = sum(sum(labelOfNeighbors(:,1:m) - repmat(fiberLabels, 1, m) ~= 0));  
-    res(i)  =  sameLabel / (sameLabel + diffLabel);
-    i = i + 1;
-end
-figure;
-plot(1:100, res, '*')
-
-
-%% Calibrate Euclidean distance of knn by Flow
-tic
-for i=1:allPoints;
-    x = fibersM(i,:);
-    j = 1;
-    for nID = kNeighbors.ids(i,:) % Traverse all knn of x
-        kNeighbors.flow_dist(i, j) = embedded_flow_distance(x, fibersM(nID, :), flowsM(i, :), bvecs, min_angle, power_law);
-        j = j + 1; 
-    end
-end
-toc
-
-%% Re-sort knn according to new distances (re-write, add assertions)
-[temp1, temp2] = sort(kNeighbors.flow_dist, 2);
-temp3  = zeros(size(kNeighbors.flow_ids));
-
-for i=1:allPoints
-    temp3(i,:) = kNeighbors.flow_ids(i, temp2(i,:));
-end
-
-kNeighbors.flow_dist = temp1;
-kNeighbors.flow_ids  = temp3;
-
-%% Other Useful
-matdata = cellfun(@str2num,data);
-
-
-%% Find how much flow goes between succecive points of the fiber (unfinished)
-fiber = 10;
-points_on_fiber = size(fibers3D{fiber},1);
-for point= 1:points_on_fiber-1
-    x = fibers3D{fiber}(point, :);
-    y = fibers3D{fiber}(point+1, :);
-    flow_fraction(x, y, flows{fiber}(point,:), bvecs, 45)
-end
-
-%% Plot the fibers
-figure; hold on;
-for i = 1:size(fibers3D, 1)
-    
-% for i = [1,10,20]
-    scatter3(fibers3D{i}(:,1), fibers3D{i}(:,2), fibers3D{i}(:,3))    
-end
-
-
-%% Plot the bvecs
-figure; hold on;
-for i = 1:size(bvecs, 1)    
-    scatter3(bvecs(i,1), bvecs(i,2), bvecs(i,3))
-end
-
-
-%% Plot bvecs-cone
-min_angle = 45;
-flows_in_cone = angles(bvecs(1,:) , bvecs) <= min_angle;    % Cone is around bvec1
-figure; hold on;
-for i = 1:size(bvecs, 1)    
-    if flows_in_cone(i) == 1
-        quiver3(0,0,0, bvecs(i,1), bvecs(i,2), bvecs(i,3))
-    end
-end
-
-
-
